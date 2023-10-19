@@ -2,7 +2,7 @@
 
 ## Download pre-trained models
 
-Make sure to download CARP's pretraining files and place them in $/pretrained/carp/$ folder.
+Make sure to download CARP's pretraining files and place them in ```/pretrained/carp/``` folder.
 
 [Checkpoints can be downloaded here.](https://drive.google.com/drive/folders/12zKF5L55kS0oNhHNTwKbCRUkAh-P0zlv?usp=sharing)
 
