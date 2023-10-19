@@ -1,26 +1,23 @@
 import argparse
-from collections import defaultdict
 import os
 import shutil
 import sys
 import datetime
 import time
 import math
-import json
-from pathlib import Path
-
 import yaml
 
-import numpy as np
-from PIL import Image
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
-from torchvision import datasets, transforms
+from torchvision import datasets
 from torchvision import models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
+from modules.carp_head import CARPHead
+from modules.carp_loss import CARPLoss
+from modules.random_partition import RandomPartition
+from modules.view_generator import ViewGenerator
 import utils
 
 
@@ -276,19 +273,6 @@ def train_carp(args):
     print('Training time {}'.format(total_time_str))
 
 
-def accuracy(output, target, topk=(1,)):
-    """Computes the accuracy over the k top predictions for the specified values of k"""
-    maxk = max(topk)
-    with torch.no_grad():
-        batch_size = target.size(0)
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.reshape(1, -1).expand_as(pred))
-        return [
-            correct[:k].reshape(-1).float().sum(0) * 100.0 / batch_size for k in topk
-        ]
-
-
 def train_one_epoch(student, teacher, teacher_without_ddp, criterion, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch,
                     fp16_scaler, random_partitioning, summary_writer, args):
@@ -371,7 +355,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, criterion, data_loade
         losses.update(loss.item(), images[0].size(0))
 
         if summary_writer is not None and it % args.print_freq == 0:
-            acc1, acc5 = accuracy(student_output[0][0], torch.argmax(
+            acc1, acc5 = utils.accuracy(student_output[0][0], torch.argmax(
                 teacher_output[1][0], dim=1), topk=(1, 5))
             summary_writer.add_scalar("loss/total", loss.item(), it)
             summary_writer.add_scalar("loss/consistency", c.item(), it)
@@ -393,122 +377,6 @@ def train_one_epoch(student, teacher, teacher_without_ddp, criterion, data_loade
 
         if i % args.print_freq == 0:
             progress.display(i)
-
-
-class CARPLoss(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @staticmethod
-    def cluster_loss(p, q, EPS):
-        # assert inputs.shape == targets.shape
-        # assert inputs.requires_grad == True
-        # assert targets.requires_grad == False
-
-        loss = torch.einsum("knc,knc->kn", [p, q])
-        loss = torch.clamp(loss, EPS, 1.0 - EPS)
-        loss = -torch.log(loss).mean()
-        return loss
-
-    def forward(self, student_output, teacher_output):
-        EPS = torch.finfo(student_output[0].dtype).eps
-        consistency = 0
-        count = 0
-        for i in range(len(student_output)):
-            for j in range(len(teacher_output)):
-                if i == j:
-                    continue
-                consistency += self.cluster_loss(
-                    student_output[i], teacher_output[j], EPS)
-                count += 1
-
-        consistency /= count
-
-        p = torch.cat(student_output, dim=1)
-        q = torch.cat(teacher_output, dim=1)
-        probs = torch.cat([p, q], dim=1)  # [N_GROUPS, 2*BS, DIM]
-        probs = torch.transpose(probs, 0, 1)  # [2*BS, N_GROUPS, DIM]
-        probs = AllGather.apply(probs)
-
-        entropy = self.kl_div(torch.mean(probs, dim=0), EPS)
-        return consistency, entropy
-
-    @staticmethod
-    def kl_div(p, EPS):
-        return (
-            torch.log(torch.tensor(
-                p.shape[-1], dtype=p.dtype, device=p.device))
-            + torch.sum(p * torch.log(torch.clamp(p, EPS, 1.0 - EPS)), axis=-1)
-        ).mean()
-
-
-class CARPHead(nn.Module):
-    def __init__(self, in_dim, out_dim, use_bn=False, norm_last_layer=True, nlayers=3, hidden_dim=2048, bottleneck_dim=256):
-        super().__init__()
-        nlayers = max(nlayers, 1)
-        if nlayers == 1:
-            self.mlp = nn.Linear(in_dim, bottleneck_dim)
-        else:
-            layers = [nn.Linear(in_dim, hidden_dim)]
-            if use_bn:
-                layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(nn.GELU())
-            for _ in range(nlayers - 2):
-                layers.append(nn.Linear(hidden_dim, hidden_dim))
-                if use_bn:
-                    layers.append(nn.BatchNorm1d(hidden_dim))
-                layers.append(nn.GELU())
-            layers.append(nn.Linear(hidden_dim, bottleneck_dim))
-            self.mlp = nn.Sequential(*layers)
-        self.apply(self._init_weights)
-        self.last_layer = nn.utils.weight_norm(
-            nn.Linear(bottleneck_dim, out_dim, bias=False))
-        self.last_layer.weight_g.data.fill_(1)
-        if norm_last_layer:
-            self.last_layer.weight_g.requires_grad = False
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            utils.trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.mlp(x)
-        x = self.last_layer(x)
-        return x
-
-
-class AllGather(torch.autograd.Function):
-
-    @staticmethod
-    def forward(ctx, x):
-        if (
-                dist.is_available()
-                and dist.is_initialized()
-                and (dist.get_world_size() > 1)
-        ):
-            x = x.contiguous()
-            outputs = [torch.zeros_like(x)
-                       for _ in range(dist.get_world_size())]
-            dist.all_gather(outputs, x)
-            return torch.cat(outputs, 0)
-        return x
-
-    @staticmethod
-    def backward(ctx, grads):
-        if (
-                dist.is_available()
-                and dist.is_initialized()
-                and (dist.get_world_size() > 1)
-        ):
-            s = (grads.shape[0] // dist.get_world_size()) * dist.get_rank()
-            e = (grads.shape[0] // dist.get_world_size()) * \
-                (dist.get_rank() + 1)
-            grads = grads.contiguous()
-            dist.all_reduce(grads)
-            return grads[s:e]
-        return grads
 
 
 class AverageMeter(object):
@@ -551,121 +419,6 @@ class ProgressMeter(object):
         num_digits = len(str(num_batches // 1))
         fmt = '{:' + str(num_digits) + 'd}'
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
-
-
-class ViewGenerator(object):
-    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number):
-        flip_and_color_jitter = transforms.Compose([
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomApply(
-                [transforms.ColorJitter(
-                    brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
-                p=0.8
-            ),
-            transforms.RandomGrayscale(p=0.2),
-        ])
-        normalize = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-        ])
-
-        # first global crop
-        self.global_transfo1 = transforms.Compose([
-            transforms.RandomResizedCrop(
-                224, scale=global_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=1.0),
-            normalize,
-        ])
-        # second global crop
-        self.global_transfo2 = transforms.Compose([
-            transforms.RandomResizedCrop(
-                224, scale=global_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.1),
-            transforms.RandomApply([utils.Solarize()], p=0.2),
-            normalize,
-        ])
-        # transformation for the local small crops
-        self.local_crops_number = local_crops_number
-        self.local_transfo = transforms.Compose([
-            transforms.RandomResizedCrop(
-                96, scale=local_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
-            transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.5),
-            normalize,
-        ])
-
-    def __call__(self, image):
-        crops = []
-        crops.append(self.global_transfo1(image))
-        crops.append(self.global_transfo2(image))
-        for _ in range(self.local_crops_number):
-            crops.append(self.local_transfo(image))
-        return crops
-
-
-class RandomPartition(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.ncrops = args.ncrops
-        self.n_prototypes = args.out_dim
-        self.weights = torch.ones([args.out_dim,], dtype=torch.float)
-
-    def forward(self, student_output, teacher_output, partition_size):
-
-        student_out = student_output.chunk(self.ncrops)
-        teacher_out = teacher_output.detach().chunk(2)
-
-        number_of_partitions = self.n_prototypes // partition_size
-
-        # logic for rangom partioning into subgroups
-        if utils.is_dist_avail_and_initialized():
-
-            if utils.get_rank() == 0:
-                rand_cluster_indices = torch.multinomial(
-                    self.weights,
-                    number_of_partitions * partition_size,
-                    replacement=False,
-                ).cuda()
-            else:
-                rand_cluster_indices = torch.zeros(
-                    (number_of_partitions * partition_size), dtype=torch.long
-                ).cuda()
-
-            torch.distributed.broadcast(rand_cluster_indices, src=0)
-        else:
-            rand_cluster_indices = torch.multinomial(
-                self.weights,
-                number_of_partitions * partition_size,
-                replacement=False,
-            ).cuda()
-
-        split_cluster_ids = torch.stack(
-            torch.split(rand_cluster_indices, partition_size)
-        )
-
-        probs_list = []
-        for log_view in student_out:
-            predictions_group = self.get_logits_group(
-                log_view, split_cluster_ids, partition_size)
-            probs_list.append(predictions_group)
-
-        targets_list = []
-        for tar_view in teacher_out:
-            targets_group = self.get_logits_group(
-                tar_view, split_cluster_ids, partition_size)
-            targets_list.append(targets_group)
-
-        return probs_list, targets_list
-
-    def get_logits_group(self, logits, split_cluster_ids, partition_size):
-        logits_group = logits[:, split_cluster_ids.flatten()]
-        logits_group = logits_group.split(partition_size, dim=1)
-        # out shape [N_BLOCKS, BS, BLOCK_SIZE]
-        logits = torch.stack(logits_group, dim=0)
-        probs = torch.softmax(logits, dim=-1)
-        return probs
 
 
 if __name__ == '__main__':

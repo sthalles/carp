@@ -16,10 +16,10 @@ Go to specific evaluation folders (such as knn or kmeans) for examples of how to
 
 ```
 @inproceedings{
-  anonymous2023representation,
+  Silva2023,
   title={Representation Learning via Consistent Assignment of Views over Random Partitions},
-  author={Anonymous},
-  booktitle={Thirty-seventh Conference on Neural Information Processing Systems},
+  author={Silva, Thalles and Ram\'irez Rivera, Ad\'in},
+  booktitle={Thirty-seventh Conference on Neural Information Processing Systems ({NeurIPS})},
   year={2023},
   url={https://openreview.net/forum?id=fem6BIJkdv}
 }
