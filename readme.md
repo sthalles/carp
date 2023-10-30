@@ -30,7 +30,7 @@ Go to specific evaluation folders (such as knn or kmeans) for examples of how to
 
 # Reference
 
-Please cite this work as:
+Please, cite this work as:
 
 ```
 @inproceedings{
