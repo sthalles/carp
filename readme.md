@@ -20,7 +20,7 @@ Make sure to download CARP's pretraining files and place them in ```/pretrained/
 |CARP|100|2x224 + 6x96|72.5|63.5|[CARP-100ep](https://drive.google.com/drive/folders/1Kj7pp2CcUcEoLYv2d4vs8hQK6xTK6VbR?usp=sharing)|
 |CARP|200|2x224 + 6x96|74.2|66.5|[CARP-100ep](https://drive.google.com/drive/folders/1NmEAzD4BtM33rOgjEw3o8YS9vHj7qrH9?usp=sharing)|
 |CARP|400|2x224|73.0|67.6|[CARP-400ep](https://drive.google.com/drive/folders/1xlDsn0JsD_tB11HA1qjdDJxVVy85pV2z?usp=sharing)|
-|CARP|400|2x224 + 6x96|75.3|67.7|[CARP-400ep](https://drive.google.com/drive/folders/1feMX0I7u_mIafiYP4EafJforZXHRkvBX?usp=sharing)|
+|CARP|400|2x224 + 6x96|75.3|67.7|[CARP-400ep](https://drive.google.com/drive/folders/1xlDsn0JsD_tB11HA1qjdDJxVVy85pV2z?usp=sharing)|
 
 ## Running evaluations
 
