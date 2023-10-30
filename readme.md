@@ -3,7 +3,7 @@
 
 ## Important Links
 
-- [Project webside](https://sthalles.github.io/carp/)
+- [Project website](https://sthalles.github.io/carp/)
 - [arXiv](https://arxiv.org/abs/2310.12692)
 - [NeurIPS procedings](https://openreview.net/forum?id=fem6BIJkdv&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DNeurIPS.cc%2F2023%2FConference%2FAuthors%23your-submissions))
 
