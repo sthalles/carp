@@ -1,7 +1,7 @@
 # Official implementation of Representation Learning via Consistent Assignment of Views over Random Partitions (CARP)
 **Thirty-seventh Conference on Neural Information Processing Systems**
 
-## Important Links
+## Important links
 
 - [Project website](https://sthalles.github.io/carp/)
 - [arXiv](https://arxiv.org/abs/2310.12692)
